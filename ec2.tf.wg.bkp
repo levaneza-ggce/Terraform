@@ -1,0 +1,138 @@
+# Find the latest Amazon Linux 2 AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# Create a new VPC for our resources
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "main-vpc"
+  }
+}
+
+# Create a public subnet
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "public-subnet"
+  }
+}
+
+# Create an Internet Gateway to allow internet access
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "main-igw"
+  }
+}
+
+# Create a Route Table to route traffic to the Internet Gateway
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = {
+    Name = "public-route-table"
+  }
+}
+
+# Associate the Route Table with our public subnet
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Create a Security Group to allow SSH and WireGuard traffic
+resource "aws_security_group" "allow_traffic" {
+  name        = "allow_ssh_wireguard"
+  description = "Allow SSH and WireGuard inbound traffic"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "SSH from anywhere"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "WireGuard from anywhere"
+    from_port   = 51820
+    to_port     = 51820
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "allow_ssh_wireguard"
+  }
+}
+
+# --- Create an SSH Key Pair ---
+
+# Generate a 2048-bit RSA key for SSH
+resource "tls_private_key" "my_key" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+# Create an AWS key pair from the generated public key
+resource "aws_key_pair" "my_key_pair" {
+  key_name   = "my-ec2-key"
+  public_key = tls_private_key.my_key.public_key_openssh
+}
+
+# Save the generated private key to a local file
+resource "local_file" "private_key_pem" {
+  content         = tls_private_key.my_key.private_key_pem
+  filename        = "my-key.pem"
+  file_permission = "0400" # Set permissions for SSH
+}
+
+# --- End of Key Pair ---
+
+# Create a free-tier eligible EC2 instance
+resource "aws_instance" "my_test_instance" {
+  ami                    = data.aws_ami.amazon_linux.id
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.allow_traffic.id]
+  key_name               = aws_key_pair.my_key_pair.key_name
+
+  # Install WireGuard with user_data
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo amazon-linux-extras install epel -y
+              sudo yum install -y wireguard-dkms wireguard-tools
+              EOF
+
+  tags = {
+    Name = "My Test Instance"
+  }
+}
