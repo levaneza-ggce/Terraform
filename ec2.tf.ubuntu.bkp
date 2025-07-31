@@ -94,12 +94,25 @@ resource "aws_security_group" "allow_traffic" {
   }
 }
 
-# --- Use Existing Public Key ---
+# --- Create an SSH Key Pair ---
 
-# Create an AWS key pair from the provided public key
+# Generate a 2048-bit RSA key for SSH
+resource "tls_private_key" "my_key" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+# Create an AWS key pair from the generated public key
 resource "aws_key_pair" "my_key_pair" {
-  key_name   = "my-ec2-key" # You can change this name if you like
-  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj70Ba4jveChzoWoFftffC9BNwJJ/L7wE9CI2AnMNQO4knoe/SVdDGmy1XVoek6NAX8Sqq7qdiTC3+UTqr/CHqIlheLFN2js+87yH8FKpoTykzNJPtCmIsL1MHcRGEAP5ud0OXwDENdRYbNA5GIZyveeoTLMd0MSs3jpeU28mmQ+fJ2yMj38zNjMobaQWCh7Jx5TxJDCeTKmGFmaOiepQ9lNkDoE2sEiUyqcVQS+gCeZkyASekvpHMqrBt7uiroU4xwYFmZV2ftAsgnbBXSqsoQ3oXlHZwSowCY/JXTW9nBLcrWKBy3K5V9ZQdve3ZRRdSXKkiteoZavc2IHfKFVm1tlpQfQYKl6VpZj9wOrKm0Rxj9oCifQ4YelAAnpynFWZDn8jy8b6UrYNA78ISFf7o6riPZiIaGXjD4vcNb82l+hQE0eZIArABkjsKOVR1Cy1SVuGbBQe4n1Jz+yU/dSvok8c4xTRqGNOv7fwt546V3lrXIrOYyCyquc9kLMh1lk0= la@goplayground"
+  key_name   = "my-ec2-key"
+  public_key = tls_private_key.my_key.public_key_openssh
+}
+
+# Save the generated private key to a local file
+resource "local_file" "private_key_pem" {
+  content         = tls_private_key.my_key.private_key_pem
+  filename        = "my-key.pem"
+  file_permission = "0400" # Set permissions for SSH
 }
 
 # --- End of Key Pair ---
